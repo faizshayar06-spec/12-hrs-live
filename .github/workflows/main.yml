@@ -29,7 +29,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
           EVENT_TYPE: ${{ github.event_name == 'repository_dispatch' && 'restart' || 'initial' }}
         run: |
-          # Timer and Auto-Restart Handler
+          # Timer Handler: Round 1 (5h 50m) ke baad Round 2 trigger karega
           trigger_handler() {
             echo "Timer started for 5 hours 50 minutes..."
             sleep 21000 
@@ -41,7 +41,7 @@ jobs:
               https://api.github.com/repos/${{ github.repository }}/dispatches \
               -d '{"event_type": "restart_stream"}'
             else
-              echo "Second cycle (strictly 11:40h+) complete. Stopping forever."
+              echo "Second cycle complete. Stopping forever."
             fi
             
             touch stop_signal.txt
@@ -57,12 +57,11 @@ jobs:
                exit 0
             fi
 
-            # Photo Left-Right Pan Logic (Slow & Smooth)
-            # scale=1400:800 (Extra width for panning)
-            # zoompan x movement: sin(t/10) means slow motion
+            # Slow Left-Right Pan Effect
+            # 'on/300' control karta hai speed ko (jitna bada number, utni dheeri movement)
             ffmpeg -loop 1 -i photo.jpg -stream_loop -1 -i audio.mp3 \
             -filter_complex \
-            "[0:v]scale=1400:800,zoompan=z=1:x='(iw-1280)/2+((iw-1280)/2)*sin(t/10)':y='(ih-720)/2':s=1280x720:fps=30[v]" \
+            "[0:v]scale=1400:800,zoompan=z=1:x='(iw-1280)/2+((iw-1280)/2)*sin(on/300)':y='(ih-720)/2':s=1280x720:fps=30[v]" \
             -map "[v]" -map 1:a:0 -c:v libx264 -preset superfast -tune zerolatency \
             -g 60 -keyint_min 60 -sc_threshold 0 \
             -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k \
