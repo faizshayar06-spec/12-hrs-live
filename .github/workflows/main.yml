@@ -1,18 +1,14 @@
-name: 24/7 Controlled Stream (Max 11h 50m)
+name: 12-Hour Controlled Stream (Two Cycles)
 
 on:
   workflow_dispatch:
   repository_dispatch:
     types: [restart_stream]
 
-concurrency:
-  group: stream-group
-  cancel-in-progress: false
-
 jobs:
   stream:
     runs-on: ubuntu-latest
-    timeout-minutes: 355 
+    timeout-minutes: 360 
 
     steps:
       - name: Checkout Code
@@ -27,21 +23,22 @@ jobs:
         env:
           S1: ${{ secrets.STREAM_1_URL }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
+          # Check karein ki ye pehla round hai ya restart wala
           EVENT_TYPE: ${{ github.event_name == 'repository_dispatch' && 'restart' || 'initial' }}
         run: |
-          # Timer Handler: Round 1 (5h 50m) ke baad Round 2 trigger karega
+          # Timer Handler: Sirf ek baar restart karega
           trigger_handler() {
             echo "Timer started for 5 hours 50 minutes..."
             sleep 21000 
             
             if [ "$EVENT_TYPE" == "initial" ]; then
-              echo "First cycle complete. Triggering final round..."
+              echo "First cycle complete. Triggering one-time restart..."
               curl -X POST -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/repos/${{ github.repository }}/dispatches \
               -d '{"event_type": "restart_stream"}'
             else
-              echo "Second cycle complete. Stopping forever."
+              echo "Second cycle complete (11:40h+). Stopping stream forever."
             fi
             
             touch stop_signal.txt
@@ -53,19 +50,18 @@ jobs:
           # Main Streaming Loop
           while true; do
             if [ -f "stop_signal.txt" ]; then
-               echo "Limit reached. Stream terminated."
+               echo "12-hour limit reached. Terminating."
                exit 0
             fi
 
-            # Slow Left-Right Pan Effect
-            # 'on/300' control karta hai speed ko (jitna bada number, utni dheeri movement)
-            ffmpeg -loop 1 -i photo.jpg -stream_loop -1 -i audio.mp3 \
+            # Photo Pulse/Shrink Effect Logic
+            ffmpeg -re -loop 1 -i photo.jpg -re -stream_loop -1 -i audio6.mp3 \
             -filter_complex \
-            "[0:v]scale=1400:800,zoompan=z=1:x='(iw-1280)/2+((iw-1280)/2)*sin(on/300)':y='(ih-720)/2':s=1280x720:fps=30[v]" \
-            -map "[v]" -map 1:a:0 -c:v libx264 -preset superfast -tune zerolatency \
-            -g 60 -keyint_min 60 -sc_threshold 0 \
+            "[0:v]scale=1366:768,zoompan=z='if(lte(mod(on,60),30),1.0+mod(on,30)/750,1.04-mod(on,30)/750)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=30[v]" \
+            -map "[v]" -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
+            -g 60 -keyint_min 60 -sc_threshold 0 -vsync cfr \
             -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k \
-            -c:a aac -b:a 128k -ar 44100 -shortest \
+            -c:a aac -b:a 128k -ar 44100 \
             -f flv "$S1" || echo "FFmpeg restart..."
 
             sleep 5
