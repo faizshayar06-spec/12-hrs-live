@@ -1,4 +1,4 @@
-run-name: Dual 12-Hour Controlled Stream
+name: 24/7 Persistent Dual Stream (Auto-Reconnect)
 
 on:
   workflow_dispatch:
@@ -22,58 +22,35 @@ jobs:
       - name: Start Dual Loop Stream
         env:
           S1: ${{ secrets.STREAM_1_URL }}
-          S2: ${{ secrets.STREAM_2_URL }} # Doosri Stream Key yahan add karein
+          S2: ${{ secrets.STREAM_2_URL }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
-          EVENT_TYPE: ${{ github.event_name == 'repository_dispatch' && 'restart' || 'initial' }}
         run: |
-          # Timer Handler
-          trigger_handler() {
-            echo "Timer started for 5 hours 50 minutes..."
-            sleep 21000 
-            
-            if [ "$EVENT_TYPE" == "initial" ]; then
-              echo "First cycle complete. Triggering one-time restart..."
-              curl -X POST -H "Authorization: token $GH_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/${{ github.repository }}/dispatches \
-              -d '{"event_type": "restart_stream"}'
-            else
-              echo "Second cycle complete. Stopping all streams."
-            fi
-            
-            touch stop_signal.txt
-            pkill ffmpeg
-          }
-
-          trigger_handler &
-
-          # Function for Streaming Logic
-          start_streaming() {
-            local TARGET_URL=$1
-            local STREAM_NAME=$2
-            while true; do
-              if [ -f "stop_signal.txt" ]; then
-                 echo "$STREAM_NAME: 12-hour limit reached. Terminating."
-                 break
-              fi
-
-              ffmpeg -re -loop 1 -i photo.jpg -re -stream_loop -1 -i audio.mp3 \
-              -filter_complex \
-              "[0:v]scale=1366:768,zoompan=z='if(lte(mod(on,60),30),1.0+mod(on,30)/750,1.04-mod(on,30)/750)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=30[v]" \
-              -map "[v]" -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
-              -g 60 -keyint_min 60 -sc_threshold 0 -vsync cfr \
-              -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k \
-              -c:a aac -b:a 128k -ar 44100 \
-              -f flv "$TARGET_URL" || echo "$STREAM_NAME: FFmpeg restart..."
-              
-              sleep 5
-            done
+          # Function to run FFmpeg for each key
+          run_ffmpeg() {
+            local STREAM_URL=$1
+            ffmpeg -re -stream_loop -1 -i video.mp4 -stream_loop -1 -i audio.mp3 \
+            -map 0:v:0 -map 1:a:0 -c:v libx264 -preset superfast -tune zerolatency \
+            -g 60 -keyint_min 60 -sc_threshold 0 \
+            -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k \
+            -c:a aac -b:a 128k -ar 44100 \
+            -f flv "$STREAM_URL"
           }
 
           # Dono streams ko background mein ek saath start karein
-          start_streaming "$S1" "Stream_1" &
-          start_streaming "$S2" "Stream_2" &
-
-          # Wait for background processes to finish
-          wait
+          run_ffmpeg "$S1" &
+          run_ffmpeg "$S2" &
+          
+          # Wait for 340 minutes (5 hours 40 mins)
+          sleep 340m 
+          
+          echo "Triggering next workflow to maintain 24/7 stream..."
+          curl -X POST -H "Authorization: token $GH_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d '{"event_type": "restart_stream"}'
+          
+          # Buffer time to prevent stream gap
+          sleep 30s
+          pkill ffmpeg
+          exit 0
           
