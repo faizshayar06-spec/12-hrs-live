@@ -1,4 +1,4 @@
-name: 12-Hour Controlled Stream (Two Cycles)
+run-name: Dual 12-Hour Controlled Stream
 
 on:
   workflow_dispatch:
@@ -19,14 +19,14 @@ jobs:
           sudo apt update
           sudo apt install -y ffmpeg
 
-      - name: Start Loop Stream
+      - name: Start Dual Loop Stream
         env:
           S1: ${{ secrets.STREAM_1_URL }}
+          S2: ${{ secrets.STREAM_2_URL }} # Doosri Stream Key yahan add karein
           GH_TOKEN: ${{ secrets.GH_PAT }}
-          # Check karein ki ye pehla round hai ya restart wala
           EVENT_TYPE: ${{ github.event_name == 'repository_dispatch' && 'restart' || 'initial' }}
         run: |
-          # Timer Handler: Sirf ek baar restart karega
+          # Timer Handler
           trigger_handler() {
             echo "Timer started for 5 hours 50 minutes..."
             sleep 21000 
@@ -38,7 +38,7 @@ jobs:
               https://api.github.com/repos/${{ github.repository }}/dispatches \
               -d '{"event_type": "restart_stream"}'
             else
-              echo "Second cycle complete (11:40h+). Stopping stream forever."
+              echo "Second cycle complete. Stopping all streams."
             fi
             
             touch stop_signal.txt
@@ -47,23 +47,33 @@ jobs:
 
           trigger_handler &
 
-          # Main Streaming Loop
-          while true; do
-            if [ -f "stop_signal.txt" ]; then
-               echo "12-hour limit reached. Terminating."
-               exit 0
-            fi
+          # Function for Streaming Logic
+          start_streaming() {
+            local TARGET_URL=$1
+            local STREAM_NAME=$2
+            while true; do
+              if [ -f "stop_signal.txt" ]; then
+                 echo "$STREAM_NAME: 12-hour limit reached. Terminating."
+                 break
+              fi
 
-            # Photo Pulse/Shrink Effect Logic
-            ffmpeg -re -loop 1 -i photo.jpg -re -stream_loop -1 -i audio.mp3 \
-            -filter_complex \
-            "[0:v]scale=1366:768,zoompan=z='if(lte(mod(on,60),30),1.0+mod(on,30)/750,1.04-mod(on,30)/750)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=30[v]" \
-            -map "[v]" -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
-            -g 60 -keyint_min 60 -sc_threshold 0 -vsync cfr \
-            -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k \
-            -c:a aac -b:a 128k -ar 44100 \
-            -f flv "$S1" || echo "FFmpeg restart..."
+              ffmpeg -re -loop 1 -i photo.jpg -re -stream_loop -1 -i audio.mp3 \
+              -filter_complex \
+              "[0:v]scale=1366:768,zoompan=z='if(lte(mod(on,60),30),1.0+mod(on,30)/750,1.04-mod(on,30)/750)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=30[v]" \
+              -map "[v]" -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
+              -g 60 -keyint_min 60 -sc_threshold 0 -vsync cfr \
+              -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k \
+              -c:a aac -b:a 128k -ar 44100 \
+              -f flv "$TARGET_URL" || echo "$STREAM_NAME: FFmpeg restart..."
+              
+              sleep 5
+            done
+          }
 
-            sleep 5
-          done
+          # Dono streams ko background mein ek saath start karein
+          start_streaming "$S1" "Stream_1" &
+          start_streaming "$S2" "Stream_2" &
+
+          # Wait for background processes to finish
+          wait
           
