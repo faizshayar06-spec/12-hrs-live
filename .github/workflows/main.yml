@@ -1,4 +1,4 @@
-name: 24/7 Persistent Dual Stream (6h Auto-Restart)
+name: 24/7 Persistent Dual Stream (Auto-Reconnect)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,6 @@ on:
 jobs:
   stream:
     runs-on: ubuntu-latest
-    # Timeout ko 360 (6h) rakha hai taaki workflow safely finish ho sake
     timeout-minutes: 360 
 
     steps:
@@ -26,6 +25,7 @@ jobs:
           S2: ${{ secrets.STREAM_2_URL }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
+          # Function to run FFmpeg for each key
           run_ffmpeg() {
             local STREAM_URL=$1
             ffmpeg -re -stream_loop -1 -i video.mp4 -stream_loop -1 -i audio.mp3 \
@@ -36,24 +36,20 @@ jobs:
             -f flv "$STREAM_URL"
           }
 
+          # Dono streams ko background mein ek saath start karein
           run_ffmpeg "$S1" &
           run_ffmpeg "$S2" &
           
-          # 5 Ghante 50 Minute wait karega (350 minutes)
-          sleep 350m 
+          # Wait for 340 minutes (5 hours 40 mins)
+          sleep 340m 
           
-          # Sirf tabhi restart trigger karega agar ye 'workflow_dispatch' se start hua ho
-          # Agar ye 'repository_dispatch' (restart wala) hai, toh ye dobara trigger nahi karega
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "First 6h cycle complete. Triggering one-time restart..."
-            curl -X POST -H "Authorization: token $GH_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/dispatches \
-            -d '{"event_type": "restart_stream"}'
-          else
-            echo "Second cycle complete (Total ~12h). Stopping stream now."
-          fi
+          echo "Triggering next workflow to maintain 24/7 stream..."
+          curl -X POST -H "Authorization: token $GH_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d '{"event_type": "restart_stream"}'
           
+          # Buffer time to prevent stream gap
           sleep 30s
           pkill ffmpeg
           exit 0
