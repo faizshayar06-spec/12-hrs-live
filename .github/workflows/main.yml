@@ -19,44 +19,30 @@ jobs:
           sudo apt update
           sudo apt install -y ffmpeg
 
-      - name: Start Single Loop Stream
+      - name: Start Loop Stream
         env:
           S1: ${{ secrets.STREAM_1_URL }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          # Manual stop ke liye trap
-          stop_all() {
-            echo "Stopping stream..."
-            pkill -P $$
-            exit 0
-          }
-          trap stop_all SIGINT SIGTERM
-
-          echo "Starting Stable 24/7 Stream..."
+          # FFmpeg with Reconnect settings to prevent sudden exits
+          ffmpeg -re -stream_loop -1 -i video.mp4 -stream_loop -1 -i audio.mp3 \
+          -map 0:v:0 -map 1:a:0 -c:v libx264 -preset superfast -tune zerolatency \
+          -g 60 -keyint_min 60 -sc_threshold 0 \
+          -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k \
+          -c:a aac -b:a 128k -ar 44100 \
+          -f flv "$S1" &
           
-          # Infinite loop jo connection tootne par auto-restart karega
-          while true; do
-            ffmpeg -re -stream_loop -1 -i video.mp4 -stream_loop -1 -i audio.mp3 \
-              -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
-              -g 60 -keyint_min 60 -sc_threshold 0 \
-              -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k \
-              -c:a aac -b:a 128k -ar 44100 -strict experimental \
-              -f flv "$S1" || echo "Stream dropped. Reconnecting in 5 seconds..."
-            
-            sleep 5
-          done &
+          # Wait for 340 minutes (5 hours 40 mins)
+          # This gives us 20 minutes buffer before the 6h limit hits
+          sleep 340m 
           
-          # 5 ghante 45 minute baad agla workflow trigger hoga
-          sleep 345m 
-          
-          echo "Triggering next workflow cycle..."
+          echo "Triggering next workflow to maintain 24/7 stream..."
           curl -X POST -H "Authorization: token $GH_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
           https://api.github.com/repos/${{ github.repository }}/dispatches \
           -d '{"event_type": "restart_stream"}'
           
-          # Transition gap ke liye 1 minute ka buffer
-          sleep 60s
-          pkill ffmpeg
+          # Give it a few seconds to ensure the next one starts before this one dies
+          sleep 30s
           exit 0
           
