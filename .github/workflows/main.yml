@@ -25,32 +25,49 @@ jobs:
           S2: ${{ secrets.STREAM_2_URL }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          # Function to run FFmpeg for each key
+          # Trap setup: Agar workflow cancel ho toh FFmpeg ko clean stop kare
+          stop_all() {
+            echo "Workflow cancelled by user. Stopping streams..."
+            pkill -P $$
+            exit 0
+          }
+          trap stop_all SIGINT SIGTERM
+
+          # Robust FFmpeg Function
           run_ffmpeg() {
             local STREAM_URL=$1
-            ffmpeg -re -stream_loop -1 -i video.mp4 -stream_loop -1 -i audio.mp3 \
-            -map 0:v:0 -map 1:a:0 -c:v libx264 -preset superfast -tune zerolatency \
-            -g 60 -keyint_min 60 -sc_threshold 0 \
-            -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k \
-            -c:a aac -b:a 128k -ar 44100 \
-            -f flv "$STREAM_URL"
+            echo "Starting stable stream for $STREAM_URL"
+            
+            # Infinite Loop: Sirf tabhi tutega jab workflow stop hoga
+            while true; do
+              ffmpeg -re -stream_loop -1 -i video.mp4 -stream_loop -1 -i audio.mp3 \
+                -map 0:v:0 -map 1:a:0 -c:v libx264 -preset superfast -tune zerolatency \
+                -g 120 -keyint_min 60 -sc_threshold 0 \
+                -pix_fmt yuv420p -b:v 2500k -maxrate 2800k -bufsize 6000k \
+                -c:a aac -b:a 128k -ar 44100 \
+                -f flv "$STREAM_URL" || echo "Connection lost. Reconnecting..."
+              
+              # 5 second ka gap taaki CPU hang na ho
+              sleep 5
+            done
           }
 
-          # Dono streams ko background mein ek saath start karein
+          # Dono streams ko background mein start karein
           run_ffmpeg "$S1" &
           run_ffmpeg "$S2" &
           
-          # Wait for 340 minutes (5 hours 40 mins)
-          sleep 340m 
+          # Wait for 345 minutes (Workflow limit ke paas)
+          sleep 345m 
           
-          echo "Triggering next workflow to maintain 24/7 stream..."
+          # Trigger next workflow (Gapless transition)
+          echo "Triggering next workflow..."
           curl -X POST -H "Authorization: token $GH_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
           https://api.github.com/repos/${{ github.repository }}/dispatches \
           -d '{"event_type": "restart_stream"}'
           
-          # Buffer time to prevent stream gap
-          sleep 30s
+          # 2 minute ka overlap rakha hai taaki stream kabhi offline na dikhe
+          sleep 120s
           pkill ffmpeg
           exit 0
           
