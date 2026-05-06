@@ -1,4 +1,4 @@
-name: 24/7 Persistent Dual Stream (Auto-Reconnect)
+name: 24/7 Persistent Stream (Auto-Reconnect)
 
 on:
   workflow_dispatch:
@@ -19,55 +19,44 @@ jobs:
           sudo apt update
           sudo apt install -y ffmpeg
 
-      - name: Start Dual Loop Stream
+      - name: Start Single Loop Stream
         env:
           S1: ${{ secrets.STREAM_1_URL }}
-          S2: ${{ secrets.STREAM_2_URL }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          # Trap setup: Agar workflow cancel ho toh FFmpeg ko clean stop kare
+          # Manual stop ke liye trap
           stop_all() {
-            echo "Workflow cancelled by user. Stopping streams..."
+            echo "Stopping stream..."
             pkill -P $$
             exit 0
           }
           trap stop_all SIGINT SIGTERM
 
-          # Robust FFmpeg Function
-          run_ffmpeg() {
-            local STREAM_URL=$1
-            echo "Starting stable stream for $STREAM_URL"
-            
-            # Infinite Loop: Sirf tabhi tutega jab workflow stop hoga
-            while true; do
-              ffmpeg -re -stream_loop -1 -i video.mp4 -stream_loop -1 -i audio.mp3 \
-                -map 0:v:0 -map 1:a:0 -c:v libx264 -preset superfast -tune zerolatency \
-                -g 120 -keyint_min 60 -sc_threshold 0 \
-                -pix_fmt yuv420p -b:v 2500k -maxrate 2800k -bufsize 6000k \
-                -c:a aac -b:a 128k -ar 44100 \
-                -f flv "$STREAM_URL" || echo "Connection lost. Reconnecting..."
-              
-              # 5 second ka gap taaki CPU hang na ho
-              sleep 5
-            done
-          }
-
-          # Dono streams ko background mein start karein
-          run_ffmpeg "$S1" &
-          run_ffmpeg "$S2" &
+          echo "Starting Stable 24/7 Stream..."
           
-          # Wait for 345 minutes (Workflow limit ke paas)
+          # Infinite loop jo connection tootne par auto-restart karega
+          while true; do
+            ffmpeg -re -stream_loop -1 -i video.mp4 -stream_loop -1 -i audio.mp3 \
+              -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -tune zerolatency \
+              -g 60 -keyint_min 60 -sc_threshold 0 \
+              -pix_fmt yuv420p -b:v 2500k -maxrate 2500k -bufsize 5000k \
+              -c:a aac -b:a 128k -ar 44100 -strict experimental \
+              -f flv "$S1" || echo "Stream dropped. Reconnecting in 5 seconds..."
+            
+            sleep 5
+          done &
+          
+          # 5 ghante 45 minute baad agla workflow trigger hoga
           sleep 345m 
           
-          # Trigger next workflow (Gapless transition)
-          echo "Triggering next workflow..."
+          echo "Triggering next workflow cycle..."
           curl -X POST -H "Authorization: token $GH_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
           https://api.github.com/repos/${{ github.repository }}/dispatches \
           -d '{"event_type": "restart_stream"}'
           
-          # 2 minute ka overlap rakha hai taaki stream kabhi offline na dikhe
-          sleep 120s
+          # Transition gap ke liye 1 minute ka buffer
+          sleep 60s
           pkill ffmpeg
           exit 0
           
